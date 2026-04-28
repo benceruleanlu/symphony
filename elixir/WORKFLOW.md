@@ -1,7 +1,8 @@
 ---
 tracker:
   kind: linear
-  project_slug: "symphony-0c79b11b75ea"
+  assignee: me
+  required_label: Symphony
   active_states:
     - Todo
     - In Progress
@@ -14,27 +15,21 @@ tracker:
     - Duplicate
     - Done
 polling:
-  interval_ms: 5000
+  interval_ms: 60000
 workspace:
   root: ~/code/symphony-workspaces
-hooks:
-  after_create: |
-    git clone --depth 1 https://github.com/openai/symphony .
-    if command -v mise >/dev/null 2>&1; then
-      cd elixir && mise trust && mise exec -- mix deps.get
-    fi
-  before_remove: |
-    cd elixir && mise exec -- mix workspace.before_remove
 agent:
   max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
+  command: codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=high app-server
   approval_policy: never
-  thread_sandbox: workspace-write
+  thread_sandbox: danger-full-access
   turn_sandbox_policy:
-    type: workspaceWrite
+    type: dangerFullAccess
 ---
+
+# {{ issue.identifier }}: {{ issue.title }}
 
 You are working on a Linear ticket `{{ issue.identifier }}`
 
@@ -67,7 +62,11 @@ Instructions:
 2. Only stop early for a true blocker (missing required auth/permissions/secrets). If blocked, record it in the workpad and move the issue according to workflow.
 3. Final message must report completed actions and blockers only. Do not include "next steps for user".
 
-Work only in the provided repository copy. Do not touch any other path.
+You start in a per-issue workspace that may be empty. Determine the repository
+or repositories needed for the Linear issue from the issue context, linked
+resources, available memory, and normal GitHub/Linear conventions. Clone the
+required repository into this workspace before implementation. If the repo
+cannot be determined with concrete evidence, use the blocked-access escape hatch.
 
 ## Prerequisite: Linear MCP or `linear_graphql` tool is available
 
@@ -92,6 +91,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Move status only when the matching quality bar is met.
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
+- Always create GitHub PRs as drafts. Never open a ready-for-review PR from an unattended run; human review starts after the linked draft PR is ready for the operator to inspect.
 
 ## Related skills
 
@@ -215,7 +215,9 @@ Use this only when completion is blocked by missing required tools or missing au
     - If app-touching, run `launch-app` validation and capture/upload media via `github-pr-media` before handoff.
 6.  Re-check all acceptance criteria and close any gaps.
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
-8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
+8.  Open a draft PR, then attach the PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
+    - Use `gh pr create --draft` or the equivalent GitHub API draft flag.
+    - Never create or convert the PR to ready-for-review.
     - Ensure the GitHub PR has label `symphony` (add it if missing).
 9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
@@ -265,7 +267,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - Acceptance criteria and required ticket-provided validation items are complete.
 - Validation/tests are green for the latest commit.
 - PR feedback sweep is complete and no actionable comments remain.
-- PR checks are green, branch is pushed, and PR is linked on the issue.
+- PR checks are green, branch is pushed, and a draft PR is linked on the issue.
 - Required PR metadata is present (`symphony` label).
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.
 
