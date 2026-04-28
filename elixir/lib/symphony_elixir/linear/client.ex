@@ -54,6 +54,141 @@ defmodule SymphonyElixir.Linear.Client do
   }
   """
 
+  @labeled_project_query """
+  query SymphonyLinearLabeledProjectPoll($projectSlug: String!, $stateNames: [String!]!, $requiredLabel: String!, $first: Int!, $relationFirst: Int!, $after: String) {
+    issues(filter: {project: {slugId: {eq: $projectSlug}}, state: {name: {in: $stateNames}}, labels: {some: {name: {eqIgnoreCase: $requiredLabel}}}}, first: $first, after: $after) {
+      nodes {
+        id
+        identifier
+        title
+        description
+        priority
+        state {
+          name
+        }
+        branchName
+        url
+        assignee {
+          id
+        }
+        labels {
+          nodes {
+            name
+          }
+        }
+        inverseRelations(first: $relationFirst) {
+          nodes {
+            type
+            issue {
+              id
+              identifier
+              state {
+                name
+              }
+            }
+          }
+        }
+        createdAt
+        updatedAt
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+  """
+
+  @assigned_query """
+  query SymphonyLinearAssignedPoll($assigneeId: ID!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
+    issues(filter: {assignee: {id: {eq: $assigneeId}}, state: {name: {in: $stateNames}}}, first: $first, after: $after) {
+      nodes {
+        id
+        identifier
+        title
+        description
+        priority
+        state {
+          name
+        }
+        branchName
+        url
+        assignee {
+          id
+        }
+        labels {
+          nodes {
+            name
+          }
+        }
+        inverseRelations(first: $relationFirst) {
+          nodes {
+            type
+            issue {
+              id
+              identifier
+              state {
+                name
+              }
+            }
+          }
+        }
+        createdAt
+        updatedAt
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+  """
+
+  @labeled_assigned_query """
+  query SymphonyLinearLabeledAssignedPoll($assigneeId: ID!, $stateNames: [String!]!, $requiredLabel: String!, $first: Int!, $relationFirst: Int!, $after: String) {
+    issues(filter: {assignee: {id: {eq: $assigneeId}}, state: {name: {in: $stateNames}}, labels: {some: {name: {eqIgnoreCase: $requiredLabel}}}}, first: $first, after: $after) {
+      nodes {
+        id
+        identifier
+        title
+        description
+        priority
+        state {
+          name
+        }
+        branchName
+        url
+        assignee {
+          id
+        }
+        labels {
+          nodes {
+            name
+          }
+        }
+        inverseRelations(first: $relationFirst) {
+          nodes {
+            type
+            issue {
+              id
+              identifier
+              state {
+                name
+              }
+            }
+          }
+        }
+        createdAt
+        updatedAt
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+  """
+
   @query_by_ids """
   query SymphonyLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
     issues(filter: {id: {in: $ids}}, first: $first) {
@@ -106,18 +241,14 @@ defmodule SymphonyElixir.Linear.Client do
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
     tracker = Config.settings!().tracker
-    project_slug = tracker.project_slug
 
     cond do
       is_nil(tracker.api_key) ->
         {:error, :missing_linear_api_token}
 
-      is_nil(project_slug) ->
-        {:error, :missing_linear_project_slug}
-
       true ->
         with {:ok, assignee_filter} <- routing_assignee_filter() do
-          do_fetch_by_states(project_slug, tracker.active_states, assignee_filter)
+          do_fetch_by_states(tracker.project_slug, tracker.active_states, assignee_filter)
         end
     end
   end
@@ -130,17 +261,33 @@ defmodule SymphonyElixir.Linear.Client do
       {:ok, []}
     else
       tracker = Config.settings!().tracker
-      project_slug = tracker.project_slug
 
       cond do
         is_nil(tracker.api_key) ->
           {:error, :missing_linear_api_token}
 
-        is_nil(project_slug) ->
-          {:error, :missing_linear_project_slug}
-
         true ->
-          do_fetch_by_states(project_slug, normalized_states, nil)
+          with {:ok, assignee_filter} <- routing_assignee_filter() do
+            do_fetch_by_states(tracker.project_slug, normalized_states, assignee_filter)
+          end
+      end
+    end
+  end
+
+  @doc false
+  @spec fetch_issues_by_states_for_test([String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
+          {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_issues_by_states_for_test(state_names, graphql_fun)
+      when is_list(state_names) and is_function(graphql_fun, 2) do
+    normalized_states = Enum.map(state_names, &to_string/1) |> Enum.uniq()
+
+    if normalized_states == [] do
+      {:ok, []}
+    else
+      tracker = Config.settings!().tracker
+
+      with {:ok, assignee_filter} <- routing_assignee_filter() do
+        do_fetch_by_states(tracker.project_slug, normalized_states, assignee_filter, graphql_fun)
       end
     end
   end
@@ -236,25 +383,40 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  defp do_fetch_by_states(project_slug, state_names, assignee_filter) do
-    do_fetch_by_states_page(project_slug, state_names, assignee_filter, nil, [])
+  defp do_fetch_by_states(project_slug, state_names, assignee_filter, graphql_fun \\ &graphql/2) do
+    with {:ok, query_context} <- issue_query_context(project_slug, assignee_filter) do
+      do_fetch_by_states_page(query_context, state_names, assignee_filter, required_label_filter(), graphql_fun, nil, [])
+    end
   end
 
-  defp do_fetch_by_states_page(project_slug, state_names, assignee_filter, after_cursor, acc_issues) do
+  defp do_fetch_by_states_page(
+         query_context,
+         state_names,
+         assignee_filter,
+         required_label,
+         graphql_fun,
+         after_cursor,
+         acc_issues
+       ) do
     with {:ok, body} <-
-           graphql(@query, %{
-             projectSlug: project_slug,
-             stateNames: state_names,
-             first: @issue_page_size,
-             relationFirst: @issue_page_size,
-             after: after_cursor
-           }),
+           graphql_fun.(
+             query_for_context(query_context, required_label),
+             variables_for_context(query_context, state_names, required_label, after_cursor)
+           ),
          {:ok, issues, page_info} <- decode_linear_page_response(body, assignee_filter) do
       updated_acc = prepend_page_issues(issues, acc_issues)
 
       case next_page_cursor(page_info) do
         {:ok, next_cursor} ->
-          do_fetch_by_states_page(project_slug, state_names, assignee_filter, next_cursor, updated_acc)
+          do_fetch_by_states_page(
+            query_context,
+            state_names,
+            assignee_filter,
+            required_label,
+            graphql_fun,
+            next_cursor,
+            updated_acc
+          )
 
         :done ->
           {:ok, finalize_paginated_issues(updated_acc)}
@@ -262,6 +424,82 @@ defmodule SymphonyElixir.Linear.Client do
         {:error, reason} ->
           {:error, reason}
       end
+    end
+  end
+
+  defp issue_query_context(project_slug, _assignee_filter) when is_binary(project_slug) do
+    trimmed_project_slug = String.trim(project_slug)
+
+    if trimmed_project_slug == "" do
+      {:error, :missing_linear_project_slug}
+    else
+      {:ok, {:project, trimmed_project_slug}}
+    end
+  end
+
+  defp issue_query_context(_project_slug, %{match_values: match_values})
+       when is_struct(match_values, MapSet) do
+    case MapSet.to_list(match_values) do
+      [assignee_id] -> {:ok, {:assignee, assignee_id}}
+      _ -> {:error, :missing_linear_assignee}
+    end
+  end
+
+  defp issue_query_context(_project_slug, _assignee_filter), do: {:error, :missing_linear_assignee}
+
+  defp query_for_context({:project, _project_slug}, required_label) when is_binary(required_label),
+    do: @labeled_project_query
+
+  defp query_for_context({:project, _project_slug}, _required_label), do: @query
+
+  defp query_for_context({:assignee, _assignee_id}, required_label) when is_binary(required_label),
+    do: @labeled_assigned_query
+
+  defp query_for_context({:assignee, _assignee_id}, _required_label), do: @assigned_query
+
+  defp variables_for_context(query_context, state_names, required_label, after_cursor) do
+    query_context
+    |> base_variables_for_context(state_names, after_cursor)
+    |> maybe_put_required_label(required_label)
+  end
+
+  defp base_variables_for_context({:project, project_slug}, state_names, after_cursor) do
+    %{
+      projectSlug: project_slug,
+      stateNames: state_names,
+      first: @issue_page_size,
+      relationFirst: @issue_page_size,
+      after: after_cursor
+    }
+  end
+
+  defp base_variables_for_context({:assignee, assignee_id}, state_names, after_cursor) do
+    %{
+      assigneeId: assignee_id,
+      stateNames: state_names,
+      first: @issue_page_size,
+      relationFirst: @issue_page_size,
+      after: after_cursor
+    }
+  end
+
+  defp maybe_put_required_label(variables, required_label) when is_binary(required_label),
+    do: Map.put(variables, :requiredLabel, required_label)
+
+  defp maybe_put_required_label(variables, _required_label), do: variables
+
+  defp required_label_filter do
+    case Config.settings!().tracker.required_label do
+      label when is_binary(label) ->
+        label
+        |> String.trim()
+        |> case do
+          "" -> nil
+          normalized_label -> normalized_label
+        end
+
+      _ ->
+        nil
     end
   end
 

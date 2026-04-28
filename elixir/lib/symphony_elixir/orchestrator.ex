@@ -237,6 +237,10 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.error("Linear project slug missing in WORKFLOW.md")
         state
 
+      {:error, :missing_linear_routing_filter} ->
+        Logger.error("Linear tracker needs either project_slug or assignee in WORKFLOW.md")
+        state
+
       {:error, :missing_tracker_kind} ->
         Logger.error("Tracker kind missing in WORKFLOW.md")
 
@@ -606,11 +610,34 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp candidate_issue?(_issue, _active_states, _terminal_states), do: false
 
-  defp issue_routable_to_worker?(%Issue{assigned_to_worker: assigned_to_worker})
-       when is_boolean(assigned_to_worker),
-       do: assigned_to_worker
+  defp issue_routable_to_worker?(%Issue{assigned_to_worker: assigned_to_worker} = issue)
+       when is_boolean(assigned_to_worker) do
+    assigned_to_worker and issue_has_required_label?(issue)
+  end
 
-  defp issue_routable_to_worker?(_issue), do: true
+  defp issue_routable_to_worker?(%Issue{} = issue), do: issue_has_required_label?(issue)
+  defp issue_routable_to_worker?(_issue), do: false
+
+  defp issue_has_required_label?(%Issue{labels: labels}) when is_list(labels) do
+    case Config.settings!().tracker.required_label do
+      label when is_binary(label) ->
+        normalized_label = normalize_label(label)
+        normalized_label == "" or Enum.any?(labels, &(normalize_label(&1) == normalized_label))
+
+      _ ->
+        true
+    end
+  end
+
+  defp issue_has_required_label?(_issue), do: false
+
+  defp normalize_label(label) when is_binary(label) do
+    label
+    |> String.trim()
+    |> String.downcase()
+  end
+
+  defp normalize_label(_label), do: ""
 
   defp todo_issue_blocked_by_non_terminal?(
          %Issue{state: issue_state, blocked_by: blockers},

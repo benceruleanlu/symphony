@@ -128,6 +128,10 @@ Notes:
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
+- `tracker.project_slug` narrows polling to one Linear project when set. If it is omitted, set
+  `tracker.assignee` so Symphony polls assigned work instead of a broad project.
+- `tracker.required_label` is an optional case-insensitive label gate; when set, only issues with
+  that Linear label are dispatch-eligible.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
