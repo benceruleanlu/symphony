@@ -107,18 +107,21 @@ defmodule SymphonyElixir.CoreTest do
     tracker = Map.get(config, "tracker", %{})
     assert is_map(tracker)
     assert Map.get(tracker, "kind") == "linear"
-    assert is_binary(Map.get(tracker, "project_slug"))
+    assert Map.get(tracker, "assignee") == "me"
+    assert Map.get(tracker, "required_label") == "Symphony"
     assert is_list(Map.get(tracker, "active_states"))
     assert is_list(Map.get(tracker, "terminal_states"))
 
-    hooks = Map.get(config, "hooks", %{})
-    assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/openai/symphony ."
-    assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
-    assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
-    assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
+    codex = Map.get(config, "codex", %{})
+    assert Map.get(codex, "command") =~ "model=\"gpt-5.5\""
+    assert Map.get(codex, "command") =~ "model_reasoning_effort=high"
+    assert Map.get(codex, "approval_policy") == "never"
+    assert Map.get(codex, "thread_sandbox") == "danger-full-access"
+    assert get_in(codex, ["turn_sandbox_policy", "type"]) == "dangerFullAccess"
 
     assert String.trim(prompt) != ""
+    assert prompt =~ "per-issue workspace that may be empty"
+    assert prompt =~ "required repository into this workspace"
     assert is_binary(Config.workflow_prompt())
     assert Config.workflow_prompt() == prompt
   end
@@ -967,6 +970,7 @@ defmodule SymphonyElixir.CoreTest do
 
     prompt = PromptBuilder.build_prompt(issue, attempt: 2)
 
+    assert String.starts_with?(prompt, "# MT-616: Use rich templates for WORKFLOW.md")
     assert prompt =~ "You are working on a Linear ticket `MT-616`"
     assert prompt =~ "Issue context:"
     assert prompt =~ "Identifier: MT-616"
