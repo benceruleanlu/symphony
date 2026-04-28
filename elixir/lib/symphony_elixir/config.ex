@@ -125,13 +125,20 @@ defmodule SymphonyElixir.Config do
       settings.tracker.kind == "linear" and not is_binary(settings.tracker.api_key) ->
         {:error, :missing_linear_api_token}
 
-      settings.tracker.kind == "linear" and not is_binary(settings.tracker.project_slug) ->
-        {:error, :missing_linear_project_slug}
+      settings.tracker.kind == "linear" and missing_linear_routing_filter?(settings.tracker) ->
+        {:error, :missing_linear_routing_filter}
 
       true ->
         :ok
     end
   end
+
+  defp missing_linear_routing_filter?(tracker) do
+    blank_string?(tracker.project_slug) and blank_string?(tracker.assignee)
+  end
+
+  defp blank_string?(value) when is_binary(value), do: String.trim(value) == ""
+  defp blank_string?(_value), do: true
 
   defp format_config_error(reason) do
     case reason do

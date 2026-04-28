@@ -357,7 +357,14 @@ Fields:
   - Canonical environment variable for `tracker.kind == "linear"`: `LINEAR_API_KEY`.
   - If `$VAR_NAME` resolves to an empty string, treat the key as missing.
 - `project_slug` (string)
-  - REQUIRED for dispatch when `tracker.kind == "linear"`.
+  - Optional project routing filter when `tracker.kind == "linear"`.
+- `assignee` (string)
+  - Optional assignee routing filter when `tracker.kind == "linear"`.
+  - Implementations SHOULD support `me` as the authenticated Linear viewer.
+  - REQUIRED when `project_slug` is omitted, to avoid broad workspace-wide polling.
+- `required_label` (string)
+  - Optional case-insensitive label gate.
+  - When set, only issues with the matching Linear label are dispatch-eligible.
 - `active_states` (list of strings)
   - Default: `Todo`, `In Progress`
 - `terminal_states` (list of strings)

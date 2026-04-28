@@ -429,6 +429,37 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert_receive {:fetch_issue_states_page, ^query, %{ids: ^second_batch_ids, first: 5, relationFirst: 50}}
   end
 
+  test "linear client includes required label in assigned issue polling query" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_project_slug: nil,
+      tracker_assignee: "user-1",
+      tracker_required_label: "Symphony"
+    )
+
+    test_pid = self()
+
+    graphql_fun = fn query, variables ->
+      send(test_pid, {:graphql_called, query, variables})
+
+      {:ok,
+       %{
+         "data" => %{
+           "issues" => %{
+             "nodes" => [],
+             "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}
+           }
+         }
+       }}
+    end
+
+    assert {:ok, []} = Client.fetch_issues_by_states_for_test(["Todo"], graphql_fun)
+
+    assert_received {:graphql_called, query, variables}
+    assert query =~ "labels: {some: {name: {eqIgnoreCase: $requiredLabel}}}"
+    assert variables.assigneeId == "user-1"
+    assert variables.requiredLabel == "Symphony"
+  end
+
   test "linear client logs response bodies for non-200 graphql responses" do
     log =
       ExUnit.CaptureLog.capture_log(fn ->
@@ -536,6 +567,50 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     }
 
     refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+  end
+
+  test "issue without required label is not dispatch-eligible" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_required_label: "Symphony")
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{
+      id: "unlabeled-1",
+      identifier: "MT-1008",
+      title: "Human-owned work",
+      state: "Todo",
+      labels: ["frontend"]
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+  end
+
+  test "issue with required label is dispatch-eligible regardless of label case" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_required_label: "Symphony")
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{
+      id: "labeled-1",
+      identifier: "MT-1009",
+      title: "Symphony-owned work",
+      state: "Todo",
+      labels: ["symphony"]
+    }
+
+    assert Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
   test "todo issue with terminal blockers remains dispatch-eligible" do
