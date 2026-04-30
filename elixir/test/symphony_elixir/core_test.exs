@@ -30,6 +30,26 @@ defmodule SymphonyElixir.CoreTest do
     write_workflow_file!(Workflow.workflow_file_path(), poll_interval_ms: 45_000)
     assert Config.settings!().polling.interval_ms == 45_000
 
+    write_workflow_file!(Workflow.workflow_file_path(),
+      poll_active_window: %{start: "08:00", end: "20:00", utc_offset: "-07:00"}
+    )
+
+    assert Config.settings!().polling.active_window.start == "08:00"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      poll_active_window: %{start: "20:00", end: "08:00", utc_offset: "-07:00"}
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "polling.active_window.start"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      poll_active_window: %{start: "08:00", end: "20:00", utc_offset: "-07:99"}
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "polling.active_window.utc_offset"
+
     write_workflow_file!(Workflow.workflow_file_path(), max_turns: 0)
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "agent.max_turns"
@@ -119,11 +139,35 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(codex, "thread_sandbox") == "danger-full-access"
     assert get_in(codex, ["turn_sandbox_policy", "type"]) == "dangerFullAccess"
 
+    polling = Map.get(config, "polling", %{})
+    assert Map.get(polling, "interval_ms") == 60_000
+    assert get_in(polling, ["active_window", "start"]) == "08:00"
+    assert get_in(polling, ["active_window", "end"]) == "20:00"
+    assert get_in(polling, ["active_window", "utc_offset"]) == "-07:00"
+
     assert String.trim(prompt) != ""
     assert prompt =~ "per-issue workspace that may be empty"
     assert prompt =~ "required repository into this workspace"
     assert is_binary(Config.workflow_prompt())
     assert Config.workflow_prompt() == prompt
+  end
+
+  test "polling schedule stays inside active window" do
+    active_window = %{start: "08:00", end: "20:00", utc_offset: "-07:00"}
+
+    before_window = DateTime.from_naive!(~N[2026-04-29 14:30:00], "Etc/UTC")
+    assert SymphonyElixir.PollingSchedule.bounded_delay_ms(0, active_window, before_window) == 30 * 60_000
+
+    inside_window = DateTime.from_naive!(~N[2026-04-29 16:00:00], "Etc/UTC")
+    assert SymphonyElixir.PollingSchedule.bounded_delay_ms(60_000, active_window, inside_window) == 60_000
+
+    near_window_end = DateTime.from_naive!(~N[2026-04-30 02:59:30], "Etc/UTC")
+
+    assert SymphonyElixir.PollingSchedule.bounded_delay_ms(60_000, active_window, near_window_end) ==
+             12 * 60 * 60_000 + 30_000
+
+    after_window = DateTime.from_naive!(~N[2026-04-30 03:00:00], "Etc/UTC")
+    assert SymphonyElixir.PollingSchedule.bounded_delay_ms(0, active_window, after_window) == 12 * 60 * 60_000
   end
 
   test "linear api token resolves from LINEAR_API_KEY env var" do

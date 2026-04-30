@@ -16,6 +16,10 @@ tracker:
     - Done
 polling:
   interval_ms: 60000
+  active_window:
+    start: "08:00"
+    end: "20:00"
+    utc_offset: "-07:00"
 workspace:
   root: ~/code/symphony-workspaces
 agent:

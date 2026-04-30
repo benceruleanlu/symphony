@@ -71,15 +71,84 @@ defmodule SymphonyElixir.Config.Schema do
     use Ecto.Schema
     import Ecto.Changeset
 
+    defmodule ActiveWindow do
+      @moduledoc false
+      use Ecto.Schema
+      import Ecto.Changeset
+
+      @primary_key false
+      embedded_schema do
+        field(:start, :string)
+        field(:end, :string)
+        field(:utc_offset, :string)
+      end
+
+      @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+      def changeset(schema, attrs) do
+        schema
+        |> cast(attrs, [:start, :end, :utc_offset], empty_values: [])
+        |> validate_required([:start, :end, :utc_offset])
+        |> validate_format(:start, ~r/^\d{2}:\d{2}$/)
+        |> validate_format(:end, ~r/^\d{2}:\d{2}$/)
+        |> validate_format(:utc_offset, ~r/^[+-]\d{2}:\d{2}$/)
+        |> validate_time_range()
+        |> validate_utc_offset()
+      end
+
+      defp validate_time_range(changeset) do
+        with start_time when is_binary(start_time) <- get_field(changeset, :start),
+             end_time when is_binary(end_time) <- get_field(changeset, :end),
+             {:ok, start_minutes} <- parse_minutes(start_time),
+             {:ok, end_minutes} <- parse_minutes(end_time),
+             true <- start_minutes < end_minutes do
+          changeset
+        else
+          _reason -> add_error(changeset, :start, "must be before active_window.end")
+        end
+      end
+
+      defp parse_minutes(<<hour_text::binary-size(2), ":", minute_text::binary-size(2)>>) do
+        with {hour, ""} <- Integer.parse(hour_text),
+             {minute, ""} <- Integer.parse(minute_text),
+             true <- hour in 0..23,
+             true <- minute in 0..59 do
+          {:ok, hour * 60 + minute}
+        else
+          _reason -> :error
+        end
+      end
+
+      defp parse_minutes(_value), do: :error
+
+      defp validate_utc_offset(changeset) do
+        case get_field(changeset, :utc_offset) do
+          <<_sign::binary-size(1), hour_text::binary-size(2), ":", minute_text::binary-size(2)>> ->
+            with {hour, ""} <- Integer.parse(hour_text),
+                 {minute, ""} <- Integer.parse(minute_text),
+                 true <- hour in 0..23,
+                 true <- minute in 0..59 do
+              changeset
+            else
+              _reason -> add_error(changeset, :utc_offset, "must be a valid UTC offset")
+            end
+
+          _value ->
+            changeset
+        end
+      end
+    end
+
     @primary_key false
     embedded_schema do
       field(:interval_ms, :integer, default: 30_000)
+      embeds_one(:active_window, ActiveWindow, on_replace: :update)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
       |> cast(attrs, [:interval_ms], empty_values: [])
+      |> cast_embed(:active_window, with: &ActiveWindow.changeset/2)
       |> validate_number(:interval_ms, greater_than: 0)
     end
   end

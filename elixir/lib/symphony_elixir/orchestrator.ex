@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, PollingSchedule, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -28,6 +28,7 @@ defmodule SymphonyElixir.Orchestrator do
 
     defstruct [
       :poll_interval_ms,
+      :poll_active_window,
       :max_concurrent_agents,
       :next_poll_due_at_ms,
       :poll_check_in_progress,
@@ -55,6 +56,7 @@ defmodule SymphonyElixir.Orchestrator do
 
     state = %State{
       poll_interval_ms: config.polling.interval_ms,
+      poll_active_window: config.polling.active_window,
       max_concurrent_agents: config.agent.max_concurrent_agents,
       next_poll_due_at_ms: now_ms,
       poll_check_in_progress: false,
@@ -65,7 +67,7 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     run_terminal_workspace_cleanup()
-    state = schedule_tick(state, 0)
+    state = schedule_next_tick(state, 0)
 
     {:ok, state}
   end
@@ -109,7 +111,7 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_info(:run_poll_cycle, state) do
     state = refresh_runtime_config(state)
     state = maybe_dispatch(state)
-    state = schedule_tick(state, state.poll_interval_ms)
+    state = schedule_next_tick(state, state.poll_interval_ms)
     state = %{state | poll_check_in_progress: false}
 
     notify_dashboard()
@@ -1185,7 +1187,7 @@ defmodule SymphonyElixir.Orchestrator do
     now_ms = System.monotonic_time(:millisecond)
     already_due? = is_integer(state.next_poll_due_at_ms) and state.next_poll_due_at_ms <= now_ms
     coalesced = state.poll_check_in_progress == true or already_due?
-    state = if coalesced, do: state, else: schedule_tick(state, 0)
+    state = if coalesced, do: state, else: schedule_next_tick(state, 0)
 
     {:reply,
      %{
@@ -1286,6 +1288,18 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
+  defp schedule_next_tick(%State{} = state, requested_delay_ms)
+       when is_integer(requested_delay_ms) and requested_delay_ms >= 0 do
+    delay_ms =
+      PollingSchedule.bounded_delay_ms(
+        requested_delay_ms,
+        state.poll_active_window,
+        DateTime.utc_now()
+      )
+
+    schedule_tick(state, delay_ms)
+  end
+
   defp schedule_poll_cycle_start do
     :timer.send_after(@poll_transition_render_delay_ms, self(), :run_poll_cycle)
     :ok
@@ -1326,6 +1340,7 @@ defmodule SymphonyElixir.Orchestrator do
     %{
       state
       | poll_interval_ms: config.polling.interval_ms,
+        poll_active_window: config.polling.active_window,
         max_concurrent_agents: config.agent.max_concurrent_agents
     }
   end
