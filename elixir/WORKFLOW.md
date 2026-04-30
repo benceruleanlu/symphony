@@ -15,7 +15,7 @@ tracker:
     - Duplicate
     - Done
 polling:
-  interval_ms: 60000
+  interval_ms: 300000
 workspace:
   root: ~/code/symphony-workspaces
 agent:
